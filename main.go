@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -16,6 +17,9 @@ import (
 	"github.com/ochinchina/supervisord/config"
 	"github.com/ochinchina/supervisord/logger"
 	log "github.com/sirupsen/logrus"
+
+	"bytes"
+	"io/ioutil"
 )
 
 // Options the command line options
@@ -121,6 +125,35 @@ func findSupervisordConf() (string, error) {
 	return "", fmt.Errorf("fail to find supervisord.conf")
 }
 
+func runInitScripts() {
+	root := "/etc/entrypoint.d"
+	shell := "bash"
+
+	files, err := ioutil.ReadDir(root)
+
+	if err != nil {
+		panic(err)
+	}
+
+	if envShell := os.Getenv("SHELL"); envShell != "" {
+		shell = envShell
+	}
+
+	var output bytes.Buffer
+	for _, file := range files {
+		cmd := exec.Command("/usr/bin/env", shell, root + "/" + file.Name())
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+		cmd.SysProcAttr.Credential = &syscall.Credential{Uid: 0, Gid: 0}
+		cmd.Stdout, cmd.Stderr = &output, &output
+		cmdErr := cmd.Run()
+		fmt.Fprintf(os.Stderr, "[entrypoint.d/%s] %s\n", file.Name(), output.String())
+		if cmdErr != nil {
+			panic(cmdErr)
+		}
+		output.Reset()
+	}
+}
+
 func runServer() {
 	// infinite loop for handling Restart ('reload' command)
 	loadEnvFile()
@@ -157,6 +190,7 @@ func getSupervisordLogFile(configFile string) string {
 }
 
 func main() {
+	runInitScripts()
 	ReapZombie()
 
 	if _, err := parser.Parse(); err != nil {
